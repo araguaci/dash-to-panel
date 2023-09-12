@@ -96,7 +96,8 @@ var Panel = GObject.registerClass({
         this._sessionStyle = null;
         this._unmappedButtons = [];
         this._elementGroups = [];
-        this.cornerSize = 0;
+
+        let systemMenuInfo = Utils.getSystemMenuInfo();
 
         if (isStandalone) {
             this.panel = new SecondaryPanel({ name: 'panel', reactive: true });
@@ -121,7 +122,7 @@ var Panel = GObject.registerClass({
 
             this.menuManager = this.panel.menuManager = new PopupMenu.PopupMenuManager(this.panel);
 
-            this._setPanelMenu('aggregateMenu', GSPanel.AggregateMenu, this.panel);
+            this._setPanelMenu(systemMenuInfo.name, systemMenuInfo.constructor, this.panel);
             this._setPanelMenu('dateMenu', DateMenu.DateMenuButton, this.panel);
             this._setPanelMenu('activities', GSPanel.ActivitiesButton, this.panel);
 
@@ -135,7 +136,7 @@ var Panel = GObject.registerClass({
 
             panelBoxes.forEach(p => this[p] = Main.panel[p]);
 
-            ['activities', 'aggregateMenu', 'dateMenu'].forEach(b => {
+            ['activities', systemMenuInfo.name, 'dateMenu'].forEach(b => {
                 let container = this.statusArea[b].container;
                 let parent = container.get_parent();
 
@@ -174,31 +175,14 @@ var Panel = GObject.registerClass({
     }
 
     enable () {
-        if (this.statusArea.aggregateMenu) {
-            Utils.getIndicators(this.statusArea.aggregateMenu._volume)._dtpIgnoreScroll = 1;
+        let { name: systemMenuName } = Utils.getSystemMenuInfo();
+
+        if (this.statusArea[systemMenuName]) {
+            Utils.getIndicators(this.statusArea[systemMenuName]._volume)._dtpIgnoreScroll = 1;
         }
 
         this.geom = this.getGeometry();
         
-        let isTop = this.geom.position == St.Side.TOP;
-
-        if (isTop && Config.PACKAGE_VERSION < '42') {
-            this.panel._leftCorner = this.panel._leftCorner || new GSPanel.PanelCorner(St.Side.LEFT);
-            this.panel._rightCorner = this.panel._rightCorner || new GSPanel.PanelCorner(St.Side.RIGHT);
-        }
-
-        if (Config.PACKAGE_VERSION < '42' && this.panel._leftCorner) {
-            if (isTop) {
-                if (this.isStandalone) {
-                    this.panel.add_child(this.panel._leftCorner);
-                    this.panel.add_child(this.panel._rightCorner);
-                }
-            } else {
-                this.panel.remove_child(this.panel._leftCorner);
-                this.panel.remove_child(this.panel._rightCorner);
-            }
-        }
-
         this._setPanelPosition();
 
         if (!this.isStandalone) {
@@ -343,7 +327,6 @@ var Panel = GObject.registerClass({
 
         this._timeoutsHandler.destroy();
         this._signalsHandler.destroy();
-        this._disablePanelCornerSignals();
         
         this.panel.remove_child(this.taskbar.actor);
         this._setAppmenuVisible(false);
@@ -378,11 +361,13 @@ var Panel = GObject.registerClass({
         this._setVertical(this._centerBox, false);
         this._setVertical(this._rightBox, false);
 
+        let { name: systemMenuName } = Utils.getSystemMenuInfo();
+
         if (!this.isStandalone) {
             ['vertical', 'horizontal', 'dashtopanelMainPanel'].forEach(c => this.panel.remove_style_class_name(c));
 
             if (!Main.sessionMode.isLocked) {
-                [['activities', 0], ['aggregateMenu', -1], ['dateMenu', 0]].forEach(b => {
+                [['activities', 0], [systemMenuName, -1], ['dateMenu', 0]].forEach(b => {
                     let container = this.statusArea[b[0]].container;
                     let originalParent = container._dtpOriginalParent;
     
@@ -392,14 +377,9 @@ var Panel = GObject.registerClass({
                 });
             }
 
-            if (Config.PACKAGE_VERSION < '42' && !this.panel._leftCorner.mapped) {
-                this.panel.add_child(this.panel._leftCorner);
-                this.panel.add_child(this.panel._rightCorner);
-            }
-
             this._setShowDesktopButton(false);
 
-            delete Utils.getIndicators(this.statusArea.aggregateMenu._volume)._dtpIgnoreScroll;
+            delete Utils.getIndicators(this.statusArea[systemMenuName]._volume)._dtpIgnoreScroll;
 
             if (DateMenu.IndicatorPad) {
                 Utils.hookVfunc(DateMenu.IndicatorPad.prototype, 'get_preferred_width', DateMenu.IndicatorPad.prototype.vfunc_get_preferred_width);
@@ -411,7 +391,7 @@ var Panel = GObject.registerClass({
             this.panel._delegate = this.panel;
         } else {
             this._removePanelMenu('dateMenu');
-            this._removePanelMenu('aggregateMenu');
+            this._removePanelMenu(systemMenuName);
             this._removePanelMenu('activities');
         }
 
@@ -458,26 +438,6 @@ var Panel = GObject.registerClass({
         let panelPositions = this.panelManager.panelsElementPositions[this.monitor.index] || Pos.defaults;
 
         this._updateGroupedElements(panelPositions);
-        
-        this._disablePanelCornerSignals();
-
-        if (Config.PACKAGE_VERSION < '42' && this.getPosition() == St.Side.TOP) {
-            let visibleElements = panelPositions.filter(pp => pp.visible);
-            let connectCorner = (corner, button) => {
-                corner._button = button;
-                corner._buttonStyleChangedSignalId = button.connect('style-changed', () => {
-                    corner.set_style_pseudo_class(button.get_style_pseudo_class());
-                });
-            }
-
-            if (visibleElements[0].element == Pos.ACTIVITIES_BTN) {
-                connectCorner(this.panel._leftCorner, this.statusArea.activities);
-            }
-
-            if (visibleElements[visibleElements.length - 1].element == Pos.SYSTEM_MENU) {
-                connectCorner(this.panel._rightCorner, this.statusArea.aggregateMenu);
-            }
-        }
 
         this.panel.hide();
         this.panel.show();
@@ -531,20 +491,6 @@ var Panel = GObject.registerClass({
                 previousPosition = currentPosition;
             }
         });
-    }
-
-    _disablePanelCornerSignals() {
-        if (Config.PACKAGE_VERSION < '42') {
-            if (this.panel._rightCorner && this.panel._rightCorner._buttonStyleChangedSignalId) {
-                this.panel._rightCorner._button.disconnect(this.panel._rightCorner._buttonStyleChangedSignalId);
-                delete this.panel._rightCorner._buttonStyleChangedSignalId;
-            }
-
-            if (this.panel._leftCorner && this.panel._leftCorner._buttonStyleChangedSignalId) {
-                this.panel._leftCorner._button.disconnect(this.panel._leftCorner._buttonStyleChangedSignalId);
-                delete this.panel._leftCorner._buttonStyleChangedSignalId;
-            }
-        }
     }
 
     _bindSettingsChanges() {
@@ -776,7 +722,7 @@ var Panel = GObject.registerClass({
         setMap(Pos.TASKBAR, this.taskbar.actor);
         setMap(Pos.CENTER_BOX, this._centerBox);
         setMap(Pos.DATE_MENU, this.statusArea.dateMenu.container);
-        setMap(Pos.SYSTEM_MENU, this.statusArea.aggregateMenu.container);
+        setMap(Pos.SYSTEM_MENU, this.statusArea[Utils.getSystemMenuInfo().name].container);
         setMap(Pos.RIGHT_BOX, this._rightBox);
         setMap(Pos.DESKTOP_BTN, this._showDesktopButton);
     }
@@ -921,32 +867,6 @@ var Panel = GObject.registerClass({
                 }
             }
         }
-
-        if (this.geom.position == St.Side.TOP && Config.PACKAGE_VERSION < '42') {
-            let childBoxLeftCorner = new Clutter.ActorBox();
-            let childBoxRightCorner = new Clutter.ActorBox();
-            let currentCornerSize = this.cornerSize;
-            let panelAllocFixedSize = box[this.fixedCoord.c2] - box[this.fixedCoord.c1];
-            
-            [ , this.cornerSize] = this.panel._leftCorner[this.sizeFunc](-1);
-
-            childBoxLeftCorner[this.varCoord.c1] = 0;
-            childBoxLeftCorner[this.varCoord.c2] = this.cornerSize;
-            childBoxLeftCorner[this.fixedCoord.c1] = panelAllocFixedSize;
-            childBoxLeftCorner[this.fixedCoord.c2] = panelAllocFixedSize + this.cornerSize;
-
-            childBoxRightCorner[this.varCoord.c1] = box[this.varCoord.c2] - this.cornerSize;
-            childBoxRightCorner[this.varCoord.c2] = box[this.varCoord.c2];
-            childBoxRightCorner[this.fixedCoord.c1] = panelAllocFixedSize;
-            childBoxRightCorner[this.fixedCoord.c2] = panelAllocFixedSize + this.cornerSize;
-
-            this.panel._leftCorner.allocate(childBoxLeftCorner);
-            this.panel._rightCorner.allocate(childBoxRightCorner);
-
-            if (this.cornerSize != currentCornerSize) {
-                this._setPanelClip();
-            }
-        }
     }
 
     _setPanelPosition() {
@@ -972,7 +892,7 @@ var Panel = GObject.registerClass({
 
     _setPanelClip(clipContainer) {
         clipContainer = clipContainer || this.panelBox.get_parent();
-        this._timeoutsHandler.add([T7, 0, () => Utils.setClip(clipContainer, clipContainer.x, clipContainer.y, this.panelBox.width, this.panelBox.height + this.cornerSize)]);
+        this._timeoutsHandler.add([T7, 0, () => Utils.setClip(clipContainer, clipContainer.x, clipContainer.y, this.panelBox.width, this.panelBox.height)]);
     }
 
     _onButtonPress(actor, event) {
@@ -1234,7 +1154,7 @@ var Panel = GObject.registerClass({
         let time = Me.settings.get_int('show-showdesktop-time') * .001;
 
         workspace.list_windows().forEach(w => {
-            if (!w.minimized && !w.skip_taskbar) {
+            if (!w.minimized && !w.customJS_ding) {
                 let tweenOpts = {
                     opacity: hide ? 0 : 255,
                     time: time,
@@ -1313,10 +1233,15 @@ var Panel = GObject.registerClass({
                 
                 Utils.activateSiblingWindow(windows, direction);
             } else if (scrollAction === 'CHANGE_VOLUME' && !event.is_pointer_emulated()) {
-                var proto = Volume.Indicator.prototype;
-                var func = proto._handleScrollEvent || proto.vfunc_scroll_event || proto._onScrollEvent;
-    
-                func.call(Main.panel.statusArea.aggregateMenu._volume, 0, event);
+                let proto = Volume.Indicator.prototype;
+                let func = proto._handleScrollEvent || proto.vfunc_scroll_event || proto._onScrollEvent;
+                let indicator = Main.panel.statusArea[Utils.getSystemMenuInfo().name]._volume;
+
+                if (indicator.quickSettingsItems)
+                    // new quick settings menu in gnome-shell > 42
+                    func(indicator.quickSettingsItems[0], event);
+                else
+                    func.call(indicator, 0, event);
             } else {
                 return;
             }

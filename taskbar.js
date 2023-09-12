@@ -403,7 +403,7 @@ var Taskbar = class {
             this.showFavorites = Me.settings.get_boolean('show-favorites') && 
                                  (this.dtpPanel.isPrimary || Me.settings.get_boolean('show-favorites-all-monitors'))
             this.showRunningApps = Me.settings.get_boolean('show-running-apps')
-            this.allowSplitApps = this.usingLaunchers || !this.showFavorites
+            this.allowSplitApps = this.usingLaunchers || (!this.isGroupApps && !this.showFavorites)
         }
 
         setAttributes()
@@ -1067,8 +1067,8 @@ var Taskbar = class {
         let seenApps = {};
         let counter = 0;
 
-        this._getAppIcons().forEach(function(icon) {
-            if (!seenApps[icon.app]) {
+        this._getAppIcons().forEach(icon => {
+            if (!seenApps[icon.app] || this.allowSplitApps) {
                 seenApps[icon.app] = 1;
                 counter++;
             }
@@ -1282,14 +1282,12 @@ var Taskbar = class {
             else {
                 if (this.forcedOverview) {
                     // force exiting overview if needed
-
                     Main.overview.hide();
-                    this.forcedOverview = false;
-                }
-                else {
+                } else {
                     selector._showAppsButton.checked = false;
-                    this.forcedOverview = false;
                 }
+
+                this.forcedOverview = false;
             }
         }
     }

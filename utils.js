@@ -31,9 +31,10 @@ const Meta = imports.gi.Meta;
 const Shell = imports.gi.Shell;
 const St = imports.gi.St;
 const Mainloop = imports.mainloop;
+const Config = imports.misc.config;
+const Util = imports.misc.util;
 const Main = imports.ui.main;
 const MessageTray = imports.ui.messageTray;
-const Util = imports.misc.util;
 
 var TRANSLATION_DOMAIN = imports.misc.extensionUtils.getCurrentExtension().metadata['gettext-domain'];
 var SCROLL_TIME = Util.SCROLL_TIME / (Util.SCROLL_TIME > 1 ? 1000 : 1);
@@ -203,9 +204,32 @@ var DisplayWrapper = {
     },
 
     getMonitorManager() {
-        return global.screen || Meta.MonitorManager.get();
+        return global.screen || global.backend.get_monitor_manager();
     }
 };
+
+let unredirectEnabled = true
+var setDisplayUnredirect = (enable) => {
+    if (enable && !unredirectEnabled)
+        Meta.enable_unredirect_for_display(global.display);
+    else if (!enable && unredirectEnabled)
+        Meta.disable_unredirect_for_display(global.display);
+
+    unredirectEnabled = enable;
+};
+
+var getSystemMenuInfo = function() {
+    if (Config.PACKAGE_VERSION < '43')
+        return {
+            name: 'aggregateMenu',
+            constructor: imports.ui.panel.AggregateMenu
+        };
+
+    return {
+        name: 'quickSettings',
+        constructor: imports.ui.panel.QuickSettings
+    };
+}
 
 var getCurrentWorkspace = function() {
     return DisplayWrapper.getWorkspaceManager().get_active_workspace();
@@ -417,7 +441,7 @@ var animateWindowOpacity = function(window, tweenOpts) {
 var animate = function(actor, options) {
     //the original animations used Tweener instead of Clutter animations, so we
     //use "time" and "delay" properties defined in seconds, as opposed to Clutter 
-    //animations duration" and "delay" which are defined in milliseconds
+    //animations "duration" and "delay" which are defined in milliseconds
     if (options.delay) {
         options.delay = options.delay * 1000;
     }
@@ -677,12 +701,14 @@ var DominantColorExtractor = class {
      */
     _getIconPixBuf() {
         let iconTexture = this._app.create_icon_texture(16);
+        let isGtk3 = !!Gtk.IconTheme.prototype.set_custom_theme;
 
         if (themeLoader === null) {
             let ifaceSettings = new Gio.Settings({ schema: "org.gnome.desktop.interface" });
+            let themeFunc = isGtk3 ? 'set_custom_theme' : 'set_theme_name';
 
             themeLoader = new Gtk.IconTheme(),
-            themeLoader.set_custom_theme(ifaceSettings.get_string('icon-theme')); // Make sure the correct theme is loaded
+            themeLoader[themeFunc](ifaceSettings.get_string('icon-theme')); // Make sure the correct theme is loaded
         }
 
         // Unable to load the icon texture, use fallback
@@ -704,9 +730,20 @@ var DominantColorExtractor = class {
 
         // Get the pixel buffer from the icon theme
         if (iconTexture instanceof Gio.ThemedIcon) {
-            let icon_info = themeLoader.lookup_icon(iconTexture.get_names()[0], DOMINANT_COLOR_ICON_SIZE, 0);
-            if (icon_info !== null)
-                return icon_info.load_icon();
+            let params = [iconTexture.get_names()[0], DOMINANT_COLOR_ICON_SIZE, 0];
+            
+            if (!isGtk3) {
+                params.splice(1, 0, null);
+                params.splice(3, 1, 1, 1, 1);
+            }
+            
+            let icon_info = themeLoader.lookup_icon.apply(themeLoader, params);
+            
+            if (icon_info !== null) {
+                if (isGtk3) return icon_info.load_icon();
+
+                return GdkPixbuf.Pixbuf.new_from_file(icon_info.get_file().get_path());
+            }
         }
 
         return null;

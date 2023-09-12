@@ -25,17 +25,12 @@ const Intellihide = Me.imports.intellihide;
 const Utils = Me.imports.utils;
 
 const Clutter = imports.gi.Clutter;
-const Main = imports.ui.main;
-const Shell = imports.gi.Shell;
-const Gtk = imports.gi.Gtk;
-const Gdk = imports.gi.Gdk;
 const Gio = imports.gi.Gio;
-const Mainloop = imports.mainloop;
-const IconGrid = imports.ui.iconGrid;
-const { OverviewActor } = imports.ui.overview;
-const Workspace = imports.ui.workspace;
+const Shell = imports.gi.Shell;
 const St = imports.gi.St;
-const WorkspaceThumbnail = imports.ui.workspaceThumbnail;
+const Main = imports.ui.main;
+const Workspace = imports.ui.workspace;
+const { WindowPreview } = imports.ui.windowPreview;
 
 const Meta = imports.gi.Meta;
 
@@ -116,13 +111,29 @@ var Overview = class {
 
         if (enable)
             allocFunc = (box) => {
-                // The default overview allocation is very good and takes into account external 
-                // struts, everywhere but the bottom where the dash is usually fixed anyway.
-                // If there is a bottom panel under the dash location, give it some space here
                 let focusedPanel = this._panel.panelManager.focusedMonitorPanel
+                
+                if (focusedPanel) {
+                    let position = focusedPanel.geom.position
+                    let isBottom = position == St.Side.BOTTOM
 
-                if (focusedPanel?.geom.position == St.Side.BOTTOM)
-                    box.y2 -= focusedPanel.geom.h
+                    if (focusedPanel.intellihide?.enabled) {
+                        // Panel intellihide is enabled (struts aren't taken into account on overview allocation),
+                        // dynamically modify the overview box to follow the reveal/hide animation
+                        let { transitioning, finalState, progress } = overviewControls._stateAdjustment.getStateTransitionParams()
+                        let size = focusedPanel.geom[focusedPanel.checkIfVertical() ? 'w' : 'h'] * 
+                                   (transitioning ? Math.abs((finalState != 0 ? 0 : 1) - progress) : 1)
+
+                        if (isBottom || position == St.Side.RIGHT)
+                            box[focusedPanel.fixedCoord.c2] -= size
+                        else
+                            box[focusedPanel.fixedCoord.c1] += size
+                    } else if (isBottom)
+                        // The default overview allocation is very good and takes into account external 
+                        // struts, everywhere but the bottom where the dash is usually fixed anyway.
+                        // If there is a bottom panel under the dash location, give it some space here
+                        box.y2 -= focusedPanel.geom.h
+                }
                 
                 proto.vfunc_allocate.call(overviewControls, box)
             }
@@ -194,8 +205,8 @@ var Overview = class {
         let seenApps = {};
         let apps = [];
         
-        this.taskbar._getAppIcons().forEach(function(appIcon) {
-            if (!seenApps[appIcon.app]) {
+        this.taskbar._getAppIcons().forEach(appIcon => {
+            if (!seenApps[appIcon.app] || this.taskbar.allowSplitApps) {
                 apps.push(appIcon);
             }
 
@@ -240,7 +251,7 @@ var Overview = class {
                 // Activate with button = 1, i.e. same as left click
                 let button = 1;
                 this._endHotkeyPreviewCycle();
-                appIcon.activate(button, modifiers, true);
+                appIcon.activate(button, modifiers, !this.taskbar.allowSplitApps);
             }
         }
     }
@@ -461,13 +472,19 @@ var Overview = class {
                 if (pickedActor) {
                     let parent = pickedActor.get_parent();
 
-                    if ((pickedActor.has_style_class_name && 
-                        pickedActor.has_style_class_name('apps-scroll-view') && 
-                        !pickedActor.has_style_pseudo_class('last-child')) ||
-                        (parent?.has_style_class_name && 
-                        parent.has_style_class_name('window-picker')) ||
-                        Main.overview._overview._controls._searchEntryBin.contains(pickedActor))
-                        return Clutter.EVENT_PROPAGATE;
+                    if (
+                        (
+                         pickedActor.has_style_class_name &&
+                         pickedActor.has_style_class_name('apps-scroll-view') &&
+                         !pickedActor.has_style_pseudo_class('first-child')
+                        ) || (
+                         parent?.has_style_class_name &&
+                         parent.has_style_class_name('window-picker')
+                        ) ||
+                        Main.overview._overview._controls._searchEntryBin.contains(pickedActor) ||
+                        pickedActor instanceof WindowPreview
+                    )
+                        return Clutter.EVENT_PROPAGATE
                 } 
 
                 Main.overview.toggle()
